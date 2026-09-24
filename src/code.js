@@ -231,14 +231,101 @@ function ga4BaseHit(ev) {
   return hit;
 }
 
-// Replaced in Task 8.
+const CART_EVENTS = ['add_to_cart', 'remove_from_cart', 'view_cart'];
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+function toEcItems(items) {
+  if (getType(items) !== 'array') return [];
+  return items.map(function (item) {
+    const categories = [item.item_category, item.item_category2, item.item_category3, item.item_category4, item.item_category5]
+      .filter(function (c) { return c !== undefined && c !== null && c !== ''; });
+    return [
+      makeString(item.item_id || ''),
+      makeString(item.item_name || ''),
+      categories.length > 1 ? categories : (categories[0] || ''),
+      toNumber(item.price) || 0,
+      toNumber(item.quantity) || 1
+    ];
+  });
+}
+
+function sumDiscount(items) {
+  let total = 0;
+  let found = false;
+  (getType(items) === 'array' ? items : []).forEach(function (item) {
+    const discount = toNumber(item.discount);
+    if (discount !== undefined) {
+      total = total + discount * (toNumber(item.quantity) || 1);
+      found = true;
+    }
+  });
+  return found ? round2(total) : undefined;
+}
+
+function cartTotal(items) {
+  let total = 0;
+  items.forEach(function (item) {
+    total = total + (toNumber(item.price) || 0) * (toNumber(item.quantity) || 1);
+  });
+  return round2(total);
+}
+
+function productViewParams(ev) {
+  const firstItem = itemsOf(ev)[0] || {};
+  if (ev.event_name === 'view_item_list') {
+    return { action_name: ev.page_title, _pkc: firstDefined([ev.item_list_name, firstItem.item_list_name]) };
+  }
+  return {
+    action_name: ev.page_title,
+    _pks: firstItem.item_id,
+    _pkn: firstItem.item_name,
+    _pkc: firstItem.item_category,
+    _pkp: toNumber(firstItem.price)
+  };
+}
+
 function ecommerceHits(ev, base) {
+  const name = ev.event_name;
+  if (name === 'purchase') {
+    const revenue = toNumber(ev.value);
+    const tax = toNumber(ev.tax);
+    const shipping = toNumber(ev.shipping);
+    return [extend(base, {
+      idgoal: '0',
+      ec_id: ev.transaction_id,
+      revenue: revenue,
+      ec_st: revenue === undefined ? undefined : round2(revenue - (tax || 0) - (shipping || 0)),
+      ec_tx: tax,
+      ec_sh: shipping,
+      ec_dt: sumDiscount(ev.items),
+      ec_items: JSON.stringify(toEcItems(ev.items))
+    })];
+  }
+  if (CART_EVENTS.indexOf(name) !== -1 && getType(data.cartItems) === 'array') {
+    return [extend(base, {
+      idgoal: '0',
+      ec_items: JSON.stringify(toEcItems(data.cartItems)),
+      revenue: cartTotal(data.cartItems)
+    })];
+  }
+  if (data.sendProductViews && (name === 'view_item' || name === 'view_item_list')) {
+    return [extend(base, productViewParams(ev))];
+  }
   return [];
 }
 
-// Replaced in Task 8.
 function goalHits(ev, base) {
-  return [];
+  return (data.goals || [])
+    .filter(function (row) { return row.eventName === ev.event_name && row.goalId; })
+    .map(function (row) {
+      return extend(base, {
+        idgoal: makeString(row.goalId),
+        revenue: row.useValue === 'yes' ? toNumber(ev.value) : undefined
+      });
+    });
 }
 
 function buildGa4Hits(ev) {

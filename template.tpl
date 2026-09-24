@@ -505,14 +505,101 @@ function ga4BaseHit(ev) {
   return hit;
 }
 
-// Replaced in Task 8.
+const CART_EVENTS = ['add_to_cart', 'remove_from_cart', 'view_cart'];
+
+function round2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+function toEcItems(items) {
+  if (getType(items) !== 'array') return [];
+  return items.map(function (item) {
+    const categories = [item.item_category, item.item_category2, item.item_category3, item.item_category4, item.item_category5]
+      .filter(function (c) { return c !== undefined && c !== null && c !== ''; });
+    return [
+      makeString(item.item_id || ''),
+      makeString(item.item_name || ''),
+      categories.length > 1 ? categories : (categories[0] || ''),
+      toNumber(item.price) || 0,
+      toNumber(item.quantity) || 1
+    ];
+  });
+}
+
+function sumDiscount(items) {
+  let total = 0;
+  let found = false;
+  (getType(items) === 'array' ? items : []).forEach(function (item) {
+    const discount = toNumber(item.discount);
+    if (discount !== undefined) {
+      total = total + discount * (toNumber(item.quantity) || 1);
+      found = true;
+    }
+  });
+  return found ? round2(total) : undefined;
+}
+
+function cartTotal(items) {
+  let total = 0;
+  items.forEach(function (item) {
+    total = total + (toNumber(item.price) || 0) * (toNumber(item.quantity) || 1);
+  });
+  return round2(total);
+}
+
+function productViewParams(ev) {
+  const firstItem = itemsOf(ev)[0] || {};
+  if (ev.event_name === 'view_item_list') {
+    return { action_name: ev.page_title, _pkc: firstDefined([ev.item_list_name, firstItem.item_list_name]) };
+  }
+  return {
+    action_name: ev.page_title,
+    _pks: firstItem.item_id,
+    _pkn: firstItem.item_name,
+    _pkc: firstItem.item_category,
+    _pkp: toNumber(firstItem.price)
+  };
+}
+
 function ecommerceHits(ev, base) {
+  const name = ev.event_name;
+  if (name === 'purchase') {
+    const revenue = toNumber(ev.value);
+    const tax = toNumber(ev.tax);
+    const shipping = toNumber(ev.shipping);
+    return [extend(base, {
+      idgoal: '0',
+      ec_id: ev.transaction_id,
+      revenue: revenue,
+      ec_st: revenue === undefined ? undefined : round2(revenue - (tax || 0) - (shipping || 0)),
+      ec_tx: tax,
+      ec_sh: shipping,
+      ec_dt: sumDiscount(ev.items),
+      ec_items: JSON.stringify(toEcItems(ev.items))
+    })];
+  }
+  if (CART_EVENTS.indexOf(name) !== -1 && getType(data.cartItems) === 'array') {
+    return [extend(base, {
+      idgoal: '0',
+      ec_items: JSON.stringify(toEcItems(data.cartItems)),
+      revenue: cartTotal(data.cartItems)
+    })];
+  }
+  if (data.sendProductViews && (name === 'view_item' || name === 'view_item_list')) {
+    return [extend(base, productViewParams(ev))];
+  }
   return [];
 }
 
-// Replaced in Task 8.
 function goalHits(ev, base) {
-  return [];
+  return (data.goals || [])
+    .filter(function (row) { return row.eventName === ev.event_name && row.goalId; })
+    .map(function (row) {
+      return extend(base, {
+        idgoal: makeString(row.goalId),
+        revenue: row.useValue === 'yes' ? toNumber(ev.value) : undefined
+      });
+    });
 }
 
 function buildGa4Hits(ev) {
@@ -829,6 +916,75 @@ scenarios:
     assertThat(granted[0].params._id).isDefined();
     const absent = run(ga4Event({ event_name: 'page_view' }), { idSite: '1' });
     assertThat(absent[0].params._id).isDefined();
+- name: purchase sends an Ecommerce event then the Matomo order
+  code: |-
+    const r = run(ga4Event({
+      event_name: 'purchase', transaction_id: 'T1', value: 129.9, tax: 20, shipping: 10,
+      items: [{ item_id: 'SKU1', item_name: 'Shoe', item_category: 'Shoes', item_category2: 'Men', price: 59.95, quantity: 2, discount: 5 }]
+    }), { idSite: '1' });
+    assertThat(r.length).isEqualTo(2);
+    assertThat(r[0].params.e_c).isEqualTo('Ecommerce');
+    assertThat(r[0].params.e_a).isEqualTo('Purchase');
+    assertThat(r[0].params.e_n).isEqualTo('T1');
+    const o = r[1].params;
+    assertThat(o.idgoal).isEqualTo('0');
+    assertThat(o.ec_id).isEqualTo('T1');
+    assertThat(o.revenue).isEqualTo('129.9');
+    assertThat(o.ec_st).isEqualTo('99.9');
+    assertThat(o.ec_tx).isEqualTo('20');
+    assertThat(o.ec_sh).isEqualTo('10');
+    assertThat(o.ec_dt).isEqualTo('10');
+    assertThat(o.ec_items).isEqualTo('[["SKU1","Shoe",["Shoes","Men"],59.95,2]]');
+    assertThat(o.e_c).isUndefined();
+- name: purchase without items sends an empty item list
+  code: |-
+    const r = run(ga4Event({ event_name: 'purchase', transaction_id: 'T2', value: 10 }), { idSite: '1' });
+    assertThat(r.length).isEqualTo(2);
+    assertThat(r[1].params.ec_items).isEqualTo('[]');
+    assertThat(r[1].params.ec_dt).isUndefined();
+    assertApi('gtmOnSuccess').wasCalled();
+- name: cart events send only the event without full cart variable
+  code: |-
+    const r = run(ga4Event({ event_name: 'add_to_cart', items: [{ item_id: 'SKU1', item_name: 'Shoe', price: 10, quantity: 1 }] }), { idSite: '1' });
+    assertThat(r.length).isEqualTo(1);
+    assertThat(r[0].params.e_c).isEqualTo('Ecommerce');
+- name: cart events send a Matomo cart update with the full cart variable
+  code: |-
+    const cart = [
+      { item_id: 'SKU1', item_name: 'Shoe', price: 10, quantity: 2 },
+      { item_id: 'SKU2', item_name: 'Sock', price: 2.5, quantity: 1 }
+    ];
+    const r = run(ga4Event({ event_name: 'remove_from_cart', items: [{ item_id: 'SKU3' }] }), { idSite: '1', cartItems: cart });
+    assertThat(r.length).isEqualTo(2);
+    assertThat(r[1].params.idgoal).isEqualTo('0');
+    assertThat(r[1].params.revenue).isEqualTo('22.5');
+    assertThat(r[1].params.ec_items).isEqualTo('[["SKU1","Shoe","",10,2],["SKU2","Sock","",2.5,1]]');
+- name: product views are sent only when enabled
+  code: |-
+    const ev = ga4Event({ event_name: 'view_item', items: [{ item_id: 'SKU1', item_name: 'Shoe', item_category: 'Shoes', price: 59.95 }] });
+    assertThat(run(ev, { idSite: '1' }).length).isEqualTo(1);
+    const r = run(ev, { idSite: '1', sendProductViews: true });
+    assertThat(r.length).isEqualTo(2);
+    assertThat(r[1].params.action_name).isEqualTo('Page');
+    assertThat(r[1].params._pks).isEqualTo('SKU1');
+    assertThat(r[1].params._pkn).isEqualTo('Shoe');
+    assertThat(r[1].params._pkc).isEqualTo('Shoes');
+    assertThat(r[1].params._pkp).isEqualTo('59.95');
+    assertThat(r[1].params.e_c).isUndefined();
+    const list = run(ga4Event({ event_name: 'view_item_list', item_list_name: 'Related' }), { idSite: '1', sendProductViews: true });
+    assertThat(list[1].params._pkc).isEqualTo('Related');
+- name: goals send an extra hit per matching row
+  code: |-
+    const goals = [{ eventName: 'generate_lead', goalId: '4', useValue: 'yes' }, { eventName: 'page_view', goalId: '5', useValue: 'no' }];
+    const r = run(ga4Event({ event_name: 'generate_lead', value: 50 }), { idSite: '1', goals: goals });
+    assertThat(r.length).isEqualTo(2);
+    assertThat(r[1].params.idgoal).isEqualTo('4');
+    assertThat(r[1].params.revenue).isEqualTo('50');
+    assertThat(r[1].params.e_c).isUndefined();
+    const pv = run(ga4Event({ event_name: 'page_view', value: 50 }), { idSite: '1', goals: goals });
+    assertThat(pv.length).isEqualTo(2);
+    assertThat(pv[1].params.idgoal).isEqualTo('5');
+    assertThat(pv[1].params.revenue).isUndefined();
 setup: |-
   const Object = require('Object');
   const decodeUriComponent = require('decodeUriComponent');

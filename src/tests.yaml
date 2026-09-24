@@ -190,6 +190,75 @@ scenarios:
     assertThat(granted[0].params._id).isDefined();
     const absent = run(ga4Event({ event_name: 'page_view' }), { idSite: '1' });
     assertThat(absent[0].params._id).isDefined();
+- name: purchase sends an Ecommerce event then the Matomo order
+  code: |-
+    const r = run(ga4Event({
+      event_name: 'purchase', transaction_id: 'T1', value: 129.9, tax: 20, shipping: 10,
+      items: [{ item_id: 'SKU1', item_name: 'Shoe', item_category: 'Shoes', item_category2: 'Men', price: 59.95, quantity: 2, discount: 5 }]
+    }), { idSite: '1' });
+    assertThat(r.length).isEqualTo(2);
+    assertThat(r[0].params.e_c).isEqualTo('Ecommerce');
+    assertThat(r[0].params.e_a).isEqualTo('Purchase');
+    assertThat(r[0].params.e_n).isEqualTo('T1');
+    const o = r[1].params;
+    assertThat(o.idgoal).isEqualTo('0');
+    assertThat(o.ec_id).isEqualTo('T1');
+    assertThat(o.revenue).isEqualTo('129.9');
+    assertThat(o.ec_st).isEqualTo('99.9');
+    assertThat(o.ec_tx).isEqualTo('20');
+    assertThat(o.ec_sh).isEqualTo('10');
+    assertThat(o.ec_dt).isEqualTo('10');
+    assertThat(o.ec_items).isEqualTo('[["SKU1","Shoe",["Shoes","Men"],59.95,2]]');
+    assertThat(o.e_c).isUndefined();
+- name: purchase without items sends an empty item list
+  code: |-
+    const r = run(ga4Event({ event_name: 'purchase', transaction_id: 'T2', value: 10 }), { idSite: '1' });
+    assertThat(r.length).isEqualTo(2);
+    assertThat(r[1].params.ec_items).isEqualTo('[]');
+    assertThat(r[1].params.ec_dt).isUndefined();
+    assertApi('gtmOnSuccess').wasCalled();
+- name: cart events send only the event without full cart variable
+  code: |-
+    const r = run(ga4Event({ event_name: 'add_to_cart', items: [{ item_id: 'SKU1', item_name: 'Shoe', price: 10, quantity: 1 }] }), { idSite: '1' });
+    assertThat(r.length).isEqualTo(1);
+    assertThat(r[0].params.e_c).isEqualTo('Ecommerce');
+- name: cart events send a Matomo cart update with the full cart variable
+  code: |-
+    const cart = [
+      { item_id: 'SKU1', item_name: 'Shoe', price: 10, quantity: 2 },
+      { item_id: 'SKU2', item_name: 'Sock', price: 2.5, quantity: 1 }
+    ];
+    const r = run(ga4Event({ event_name: 'remove_from_cart', items: [{ item_id: 'SKU3' }] }), { idSite: '1', cartItems: cart });
+    assertThat(r.length).isEqualTo(2);
+    assertThat(r[1].params.idgoal).isEqualTo('0');
+    assertThat(r[1].params.revenue).isEqualTo('22.5');
+    assertThat(r[1].params.ec_items).isEqualTo('[["SKU1","Shoe","",10,2],["SKU2","Sock","",2.5,1]]');
+- name: product views are sent only when enabled
+  code: |-
+    const ev = ga4Event({ event_name: 'view_item', items: [{ item_id: 'SKU1', item_name: 'Shoe', item_category: 'Shoes', price: 59.95 }] });
+    assertThat(run(ev, { idSite: '1' }).length).isEqualTo(1);
+    const r = run(ev, { idSite: '1', sendProductViews: true });
+    assertThat(r.length).isEqualTo(2);
+    assertThat(r[1].params.action_name).isEqualTo('Page');
+    assertThat(r[1].params._pks).isEqualTo('SKU1');
+    assertThat(r[1].params._pkn).isEqualTo('Shoe');
+    assertThat(r[1].params._pkc).isEqualTo('Shoes');
+    assertThat(r[1].params._pkp).isEqualTo('59.95');
+    assertThat(r[1].params.e_c).isUndefined();
+    const list = run(ga4Event({ event_name: 'view_item_list', item_list_name: 'Related' }), { idSite: '1', sendProductViews: true });
+    assertThat(list[1].params._pkc).isEqualTo('Related');
+- name: goals send an extra hit per matching row
+  code: |-
+    const goals = [{ eventName: 'generate_lead', goalId: '4', useValue: 'yes' }, { eventName: 'page_view', goalId: '5', useValue: 'no' }];
+    const r = run(ga4Event({ event_name: 'generate_lead', value: 50 }), { idSite: '1', goals: goals });
+    assertThat(r.length).isEqualTo(2);
+    assertThat(r[1].params.idgoal).isEqualTo('4');
+    assertThat(r[1].params.revenue).isEqualTo('50');
+    assertThat(r[1].params.e_c).isUndefined();
+    const pv = run(ga4Event({ event_name: 'page_view', value: 50 }), { idSite: '1', goals: goals });
+    assertThat(pv.length).isEqualTo(2);
+    assertThat(pv[1].params.idgoal).isEqualTo('5');
+    assertThat(pv[1].params.revenue).isUndefined();
 setup: |-
   const Object = require('Object');
   const decodeUriComponent = require('decodeUriComponent');
