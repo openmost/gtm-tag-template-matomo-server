@@ -145,13 +145,54 @@ scenarios:
     const r = run(ga4Event({ event_name: 'add_to_cart', event_category: 'Shop', event_action: 'Basket add' }), { idSite: '1' });
     assertThat(r[0].params.e_c).isEqualTo('Shop');
     assertThat(r[0].params.e_a).isEqualTo('Basket add');
-- name: tag fields override event parameters
+- name: Matomo event type sends one event built from the tag fields
   code: |-
-    const r = run(ga4Event({ event_name: 'login', event_category: 'Shop' }), { idSite: '1', eventCategory: 'Forced', eventAction: 'Act', eventName: 'Nm', eventValue: '7' });
+    const r = run(ga4Event({ event_name: 'login', event_category: 'Shop' }), { idSite: '1', trackingType: 'event', eventCategory: 'Forced', eventAction: 'Act', eventName: 'Nm', eventValue: '7' });
+    assertThat(r.length).isEqualTo(1);
     assertThat(r[0].params.e_c).isEqualTo('Forced');
     assertThat(r[0].params.e_a).isEqualTo('Act');
     assertThat(r[0].params.e_n).isEqualTo('Nm');
     assertThat(r[0].params.e_v).isEqualTo('7');
+    assertThat(r[0].params._id).isDefined();
+    assertThat(r[0].params.action_name).isUndefined();
+- name: Matomo event type ignores exclusions goals and ecommerce
+  code: |-
+    const goals = [{ eventName: 'purchase', goalId: '4', useValue: 'no' }];
+    const r = run(ga4Event({ event_name: 'purchase', transaction_id: 'T1', value: 10 }), { idSite: '1', trackingType: 'event', eventCategory: 'C', eventAction: 'A', goals: goals });
+    assertThat(r.length).isEqualTo(1);
+    assertThat(r[0].params.idgoal).isUndefined();
+    const s = run(ga4Event({ event_name: 'session_start' }), { idSite: '1', trackingType: 'event', eventCategory: 'C', eventAction: 'A' });
+    assertThat(s.length).isEqualTo(1);
+- name: Matomo event type reuses the visitor of a Matomo client hit
+  code: |-
+    const r = run(replayEvent({ uid: 'u1', fa_id: 'f1', action_name: 'Home' }), { trackingType: 'event', eventCategory: 'C', eventAction: 'A' });
+    assertThat(r.length).isEqualTo(1);
+    const p = r[0].params;
+    assertThat(p.idsite).isEqualTo('1');
+    assertThat(p._id).isEqualTo('0123456789abcdef');
+    assertThat(p.uid).isEqualTo('u1');
+    assertThat(p.url).isEqualTo('https://www.example.com/');
+    assertThat(p.cip).isEqualTo('203.0.113.9');
+    assertThat(p.fa_id).isUndefined();
+    assertThat(p.action_name).isUndefined();
+    assertThat(p.e_c).isEqualTo('C');
+- name: Matomo event type drops a non numeric value
+  code: |-
+    const r = run(ga4Event({ event_name: 'login', value: 5 }), { idSite: '1', trackingType: 'event', eventCategory: 'C', eventAction: 'A', eventValue: 'abc' });
+    assertThat(r[0].params.e_v).isUndefined();
+- name: automatic consent follows the Matomo client consent signal
+  code: |-
+    const ev = replayEvent({ uid: 'u1' });
+    ev['x-matomo-consent'] = 'denied';
+    const r = run(ev);
+    assertThat(r[0].params.uid).isUndefined();
+    assertThat(r[0].params._id).isUndefined();
+- name: invalid ecommerce items are ignored
+  code: |-
+    const r = run(ga4Event({ event_name: 'purchase', transaction_id: 'T1', value: 10, items: [null, { item_id: 'SKU1', price: 10, quantity: 1 }] }), { idSite: '1' });
+    assertThat(r[1].params.ec_items).isEqualTo('[["SKU1","","",10,1]]');
+    const c = run(ga4Event({ event_name: 'add_to_cart' }), { idSite: '1', cartItems: [null, { item_id: 'SKU1', price: 10, quantity: 2 }] });
+    assertThat(c[1].params.revenue).isEqualTo('20');
 - name: automatic event names
   code: |-
     const cases = [
@@ -294,7 +335,8 @@ setup: |-
     cartItems: '',
     sendProductViews: false,
     overrides: [],
-    removeParams: ''
+    removeParams: '',
+    trackingType: 'auto'
   };
   function withData(extra) {
     const d = {};

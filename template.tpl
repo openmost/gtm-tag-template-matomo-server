@@ -33,6 +33,25 @@ ___TEMPLATE_PARAMETERS___
 
 [
   {
+    "type": "SELECT",
+    "name": "trackingType",
+    "displayName": "Tracking type",
+    "macrosInSelect": false,
+    "simpleValueType": true,
+    "defaultValue": "auto",
+    "selectItems": [
+      {
+        "value": "auto",
+        "displayValue": "Automatic (replay Matomo Client hits, map GA4 events)"
+      },
+      {
+        "value": "event",
+        "displayValue": "Matomo event (category, action, name, value set below)"
+      }
+    ],
+    "help": "Automatic: one tag handles every event of the Matomo Client or GA4 client. Matomo event: sends one Matomo event with the values below, for the visitor of the incoming event; create one tag per event you need."
+  },
+  {
     "type": "TEXT",
     "name": "matomoUrl",
     "displayName": "Matomo instance URL",
@@ -68,6 +87,55 @@ ___TEMPLATE_PARAMETERS___
     "displayName": "Site ID",
     "simpleValueType": true,
     "help": "Required for GA4 events. For events from the Matomo Client, leave empty to keep the site ID of the hit, or set it to override."
+  },
+  {
+    "type": "GROUP",
+    "name": "eventGroup",
+    "displayName": "Matomo event",
+    "groupStyle": "ZIPPY_OPEN",
+    "enablingConditions": [
+      {
+        "paramName": "trackingType",
+        "paramValue": "event",
+        "type": "EQUALS"
+      }
+    ],
+    "subParams": [
+      {
+        "type": "TEXT",
+        "name": "eventCategory",
+        "displayName": "Event category",
+        "simpleValueType": true,
+        "valueValidators": [
+          {
+            "type": "NON_EMPTY"
+          }
+        ]
+      },
+      {
+        "type": "TEXT",
+        "name": "eventAction",
+        "displayName": "Event action",
+        "simpleValueType": true,
+        "valueValidators": [
+          {
+            "type": "NON_EMPTY"
+          }
+        ]
+      },
+      {
+        "type": "TEXT",
+        "name": "eventName",
+        "displayName": "Event name (optional)",
+        "simpleValueType": true
+      },
+      {
+        "type": "TEXT",
+        "name": "eventValue",
+        "displayName": "Event value (optional, numeric)",
+        "simpleValueType": true
+      }
+    ]
   },
   {
     "type": "GROUP",
@@ -127,30 +195,6 @@ ___TEMPLATE_PARAMETERS___
         "displayName": "Events not sent to Matomo (comma-separated)",
         "simpleValueType": true,
         "defaultValue": "session_start, first_visit, user_engagement"
-      },
-      {
-        "type": "TEXT",
-        "name": "eventCategory",
-        "displayName": "Force event category",
-        "simpleValueType": true
-      },
-      {
-        "type": "TEXT",
-        "name": "eventAction",
-        "displayName": "Force event action",
-        "simpleValueType": true
-      },
-      {
-        "type": "TEXT",
-        "name": "eventName",
-        "displayName": "Force event name",
-        "simpleValueType": true
-      },
-      {
-        "type": "TEXT",
-        "name": "eventValue",
-        "displayName": "Force event value",
-        "simpleValueType": true
       },
       {
         "type": "TEXT",
@@ -231,6 +275,13 @@ ___TEMPLATE_PARAMETERS___
         "checkboxText": "Also send view_item / view_item_list as Matomo product/category page views",
         "simpleValueType": true,
         "defaultValue": false
+      }
+    ],
+    "enablingConditions": [
+      {
+        "paramName": "trackingType",
+        "paramValue": "auto",
+        "type": "EQUALS"
       }
     ]
   },
@@ -339,7 +390,7 @@ function isConsentDenied(ev, replayMode) {
     const value = makeString(data.consentValue).toLowerCase();
     return value === 'denied' || value === 'false' || value === '0';
   }
-  if (replayMode) return false;
+  if (replayMode) return ev['x-matomo-consent'] === 'denied';
   const gcs = makeString(ev['x-ga-gcs'] || '');
   return gcs.length >= 4 && gcs.charAt(3) === '0';
 }
@@ -449,7 +500,7 @@ function firstDefined(list) {
 }
 
 function itemsOf(ev) {
-  return getType(ev.items) === 'array' ? ev.items : [];
+  return validItems(ev.items);
 }
 
 function autoEventName(ev) {
@@ -468,10 +519,10 @@ function autoEventName(ev) {
 
 function matomoEventParams(ev) {
   return {
-    e_c: firstDefined([data.eventCategory, ev.event_category, CATEGORY_BY_EVENT[ev.event_name], 'Other']),
-    e_a: firstDefined([data.eventAction, ev.event_action, labelize(ev.event_name)]),
-    e_n: firstDefined([data.eventName, ev.event_label, autoEventName(ev)]),
-    e_v: toNumber(firstDefined([data.eventValue, ev.value]))
+    e_c: firstDefined([ev.event_category, CATEGORY_BY_EVENT[ev.event_name], 'Other']),
+    e_a: firstDefined([ev.event_action, labelize(ev.event_name)]),
+    e_n: firstDefined([ev.event_label, autoEventName(ev)]),
+    e_v: toNumber(ev.value)
   };
 }
 
@@ -509,9 +560,12 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
+function validItems(items) {
+  return getType(items) === 'array' ? items.filter(function (item) { return getType(item) === 'object'; }) : [];
+}
+
 function toEcItems(items) {
-  if (getType(items) !== 'array') return [];
-  return items.map(function (item) {
+  return validItems(items).map(function (item) {
     const categories = [item.item_category, item.item_category2, item.item_category3, item.item_category4, item.item_category5]
       .filter(function (c) { return c !== undefined && c !== null && c !== ''; });
     return [
@@ -527,7 +581,7 @@ function toEcItems(items) {
 function sumDiscount(items) {
   let total = 0;
   let found = false;
-  (getType(items) === 'array' ? items : []).forEach(function (item) {
+  validItems(items).forEach(function (item) {
     const discount = toNumber(item.discount);
     if (discount !== undefined) {
       total = total + discount * (toNumber(item.quantity) || 1);
@@ -539,7 +593,7 @@ function sumDiscount(items) {
 
 function cartTotal(items) {
   let total = 0;
-  items.forEach(function (item) {
+  validItems(items).forEach(function (item) {
     total = total + (toNumber(item.price) || 0) * (toNumber(item.quantity) || 1);
   });
   return round2(total);
@@ -627,6 +681,31 @@ function buildGa4Hits(ev) {
   return hits.map(compact);
 }
 
+const VISITOR_CONTEXT_PARAMS = ['idsite', '_id', 'cid', 'uid', 'url', 'urlref', 'res', 'lang', 'pv_id'];
+
+// "Matomo event" tracking type: one event built from the tag fields, attached to the visitor of the incoming event.
+function buildCustomEventHits(ev, raw) {
+  let base;
+  if (getType(raw) === 'object') {
+    base = {};
+    VISITOR_CONTEXT_PARAMS.forEach(function (k) {
+      if (raw[k] !== undefined) base[k] = raw[k];
+    });
+    base.rec = '1';
+    if (data.idSite) base.idsite = makeString(data.idSite);
+    if (ev.ip_override) base.cip = ev.ip_override;
+    if (ev.user_agent) base.ua = ev.user_agent;
+  } else {
+    base = ga4BaseHit(ev);
+  }
+  return [compact(extend(base, {
+    e_c: data.eventCategory,
+    e_a: data.eventAction,
+    e_n: data.eventName,
+    e_v: toNumber(data.eventValue)
+  }))];
+}
+
 // ---- main ----
 const eventData = getAllEventData();
 const matomoHit = eventData['x-matomo-hit'];
@@ -638,7 +717,14 @@ if (!replayMode && !data.idSite) {
   return;
 }
 
-const rawHits = replayMode ? buildReplayHits(eventData, matomoHit) : buildGa4Hits(eventData);
+let rawHits;
+if (data.trackingType === 'event') {
+  rawHits = buildCustomEventHits(eventData, matomoHit);
+} else if (replayMode) {
+  rawHits = buildReplayHits(eventData, matomoHit);
+} else {
+  rawHits = buildGa4Hits(eventData);
+}
 sendHits(rawHits.map(function (hit) { return finalizeHit(hit, eventData, replayMode); }), headersFor(eventData));
 
 
@@ -870,13 +956,54 @@ scenarios:
     const r = run(ga4Event({ event_name: 'add_to_cart', event_category: 'Shop', event_action: 'Basket add' }), { idSite: '1' });
     assertThat(r[0].params.e_c).isEqualTo('Shop');
     assertThat(r[0].params.e_a).isEqualTo('Basket add');
-- name: tag fields override event parameters
+- name: Matomo event type sends one event built from the tag fields
   code: |-
-    const r = run(ga4Event({ event_name: 'login', event_category: 'Shop' }), { idSite: '1', eventCategory: 'Forced', eventAction: 'Act', eventName: 'Nm', eventValue: '7' });
+    const r = run(ga4Event({ event_name: 'login', event_category: 'Shop' }), { idSite: '1', trackingType: 'event', eventCategory: 'Forced', eventAction: 'Act', eventName: 'Nm', eventValue: '7' });
+    assertThat(r.length).isEqualTo(1);
     assertThat(r[0].params.e_c).isEqualTo('Forced');
     assertThat(r[0].params.e_a).isEqualTo('Act');
     assertThat(r[0].params.e_n).isEqualTo('Nm');
     assertThat(r[0].params.e_v).isEqualTo('7');
+    assertThat(r[0].params._id).isDefined();
+    assertThat(r[0].params.action_name).isUndefined();
+- name: Matomo event type ignores exclusions goals and ecommerce
+  code: |-
+    const goals = [{ eventName: 'purchase', goalId: '4', useValue: 'no' }];
+    const r = run(ga4Event({ event_name: 'purchase', transaction_id: 'T1', value: 10 }), { idSite: '1', trackingType: 'event', eventCategory: 'C', eventAction: 'A', goals: goals });
+    assertThat(r.length).isEqualTo(1);
+    assertThat(r[0].params.idgoal).isUndefined();
+    const s = run(ga4Event({ event_name: 'session_start' }), { idSite: '1', trackingType: 'event', eventCategory: 'C', eventAction: 'A' });
+    assertThat(s.length).isEqualTo(1);
+- name: Matomo event type reuses the visitor of a Matomo client hit
+  code: |-
+    const r = run(replayEvent({ uid: 'u1', fa_id: 'f1', action_name: 'Home' }), { trackingType: 'event', eventCategory: 'C', eventAction: 'A' });
+    assertThat(r.length).isEqualTo(1);
+    const p = r[0].params;
+    assertThat(p.idsite).isEqualTo('1');
+    assertThat(p._id).isEqualTo('0123456789abcdef');
+    assertThat(p.uid).isEqualTo('u1');
+    assertThat(p.url).isEqualTo('https://www.example.com/');
+    assertThat(p.cip).isEqualTo('203.0.113.9');
+    assertThat(p.fa_id).isUndefined();
+    assertThat(p.action_name).isUndefined();
+    assertThat(p.e_c).isEqualTo('C');
+- name: Matomo event type drops a non numeric value
+  code: |-
+    const r = run(ga4Event({ event_name: 'login', value: 5 }), { idSite: '1', trackingType: 'event', eventCategory: 'C', eventAction: 'A', eventValue: 'abc' });
+    assertThat(r[0].params.e_v).isUndefined();
+- name: automatic consent follows the Matomo client consent signal
+  code: |-
+    const ev = replayEvent({ uid: 'u1' });
+    ev['x-matomo-consent'] = 'denied';
+    const r = run(ev);
+    assertThat(r[0].params.uid).isUndefined();
+    assertThat(r[0].params._id).isUndefined();
+- name: invalid ecommerce items are ignored
+  code: |-
+    const r = run(ga4Event({ event_name: 'purchase', transaction_id: 'T1', value: 10, items: [null, { item_id: 'SKU1', price: 10, quantity: 1 }] }), { idSite: '1' });
+    assertThat(r[1].params.ec_items).isEqualTo('[["SKU1","","",10,1]]');
+    const c = run(ga4Event({ event_name: 'add_to_cart' }), { idSite: '1', cartItems: [null, { item_id: 'SKU1', price: 10, quantity: 2 }] });
+    assertThat(c[1].params.revenue).isEqualTo('20');
 - name: automatic event names
   code: |-
     const cases = [
@@ -1019,7 +1146,8 @@ setup: |-
     cartItems: '',
     sendProductViews: false,
     overrides: [],
-    removeParams: ''
+    removeParams: '',
+    trackingType: 'auto'
   };
   function withData(extra) {
     const d = {};

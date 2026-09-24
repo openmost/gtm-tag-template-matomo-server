@@ -65,7 +65,7 @@ function isConsentDenied(ev, replayMode) {
     const value = makeString(data.consentValue).toLowerCase();
     return value === 'denied' || value === 'false' || value === '0';
   }
-  if (replayMode) return false;
+  if (replayMode) return ev['x-matomo-consent'] === 'denied';
   const gcs = makeString(ev['x-ga-gcs'] || '');
   return gcs.length >= 4 && gcs.charAt(3) === '0';
 }
@@ -175,7 +175,7 @@ function firstDefined(list) {
 }
 
 function itemsOf(ev) {
-  return getType(ev.items) === 'array' ? ev.items : [];
+  return validItems(ev.items);
 }
 
 function autoEventName(ev) {
@@ -194,10 +194,10 @@ function autoEventName(ev) {
 
 function matomoEventParams(ev) {
   return {
-    e_c: firstDefined([data.eventCategory, ev.event_category, CATEGORY_BY_EVENT[ev.event_name], 'Other']),
-    e_a: firstDefined([data.eventAction, ev.event_action, labelize(ev.event_name)]),
-    e_n: firstDefined([data.eventName, ev.event_label, autoEventName(ev)]),
-    e_v: toNumber(firstDefined([data.eventValue, ev.value]))
+    e_c: firstDefined([ev.event_category, CATEGORY_BY_EVENT[ev.event_name], 'Other']),
+    e_a: firstDefined([ev.event_action, labelize(ev.event_name)]),
+    e_n: firstDefined([ev.event_label, autoEventName(ev)]),
+    e_v: toNumber(ev.value)
   };
 }
 
@@ -235,9 +235,12 @@ function round2(n) {
   return Math.round(n * 100) / 100;
 }
 
+function validItems(items) {
+  return getType(items) === 'array' ? items.filter(function (item) { return getType(item) === 'object'; }) : [];
+}
+
 function toEcItems(items) {
-  if (getType(items) !== 'array') return [];
-  return items.map(function (item) {
+  return validItems(items).map(function (item) {
     const categories = [item.item_category, item.item_category2, item.item_category3, item.item_category4, item.item_category5]
       .filter(function (c) { return c !== undefined && c !== null && c !== ''; });
     return [
@@ -253,7 +256,7 @@ function toEcItems(items) {
 function sumDiscount(items) {
   let total = 0;
   let found = false;
-  (getType(items) === 'array' ? items : []).forEach(function (item) {
+  validItems(items).forEach(function (item) {
     const discount = toNumber(item.discount);
     if (discount !== undefined) {
       total = total + discount * (toNumber(item.quantity) || 1);
@@ -265,7 +268,7 @@ function sumDiscount(items) {
 
 function cartTotal(items) {
   let total = 0;
-  items.forEach(function (item) {
+  validItems(items).forEach(function (item) {
     total = total + (toNumber(item.price) || 0) * (toNumber(item.quantity) || 1);
   });
   return round2(total);
@@ -353,6 +356,31 @@ function buildGa4Hits(ev) {
   return hits.map(compact);
 }
 
+const VISITOR_CONTEXT_PARAMS = ['idsite', '_id', 'cid', 'uid', 'url', 'urlref', 'res', 'lang', 'pv_id'];
+
+// "Matomo event" tracking type: one event built from the tag fields, attached to the visitor of the incoming event.
+function buildCustomEventHits(ev, raw) {
+  let base;
+  if (getType(raw) === 'object') {
+    base = {};
+    VISITOR_CONTEXT_PARAMS.forEach(function (k) {
+      if (raw[k] !== undefined) base[k] = raw[k];
+    });
+    base.rec = '1';
+    if (data.idSite) base.idsite = makeString(data.idSite);
+    if (ev.ip_override) base.cip = ev.ip_override;
+    if (ev.user_agent) base.ua = ev.user_agent;
+  } else {
+    base = ga4BaseHit(ev);
+  }
+  return [compact(extend(base, {
+    e_c: data.eventCategory,
+    e_a: data.eventAction,
+    e_n: data.eventName,
+    e_v: toNumber(data.eventValue)
+  }))];
+}
+
 // ---- main ----
 const eventData = getAllEventData();
 const matomoHit = eventData['x-matomo-hit'];
@@ -364,5 +392,12 @@ if (!replayMode && !data.idSite) {
   return;
 }
 
-const rawHits = replayMode ? buildReplayHits(eventData, matomoHit) : buildGa4Hits(eventData);
+let rawHits;
+if (data.trackingType === 'event') {
+  rawHits = buildCustomEventHits(eventData, matomoHit);
+} else if (replayMode) {
+  rawHits = buildReplayHits(eventData, matomoHit);
+} else {
+  rawHits = buildGa4Hits(eventData);
+}
 sendHits(rawHits.map(function (hit) { return finalizeHit(hit, eventData, replayMode); }), headersFor(eventData));
