@@ -148,9 +148,123 @@ function buildReplayHits(ev, raw) {
   return [hit];
 }
 
-// Replaced in Task 7.
-function buildGa4Hits(ev) {
+const CATEGORY_BY_EVENT = {
+  add_payment_info: 'Ecommerce', add_shipping_info: 'Ecommerce', add_to_cart: 'Ecommerce',
+  add_to_wishlist: 'Ecommerce', begin_checkout: 'Ecommerce', purchase: 'Ecommerce',
+  refund: 'Ecommerce', remove_from_cart: 'Ecommerce', select_item: 'Ecommerce',
+  select_promotion: 'Ecommerce', view_cart: 'Ecommerce', view_item: 'Ecommerce',
+  view_item_list: 'Ecommerce', view_promotion: 'Ecommerce',
+  generate_lead: 'Lead', qualify_lead: 'Lead', disqualify_lead: 'Lead',
+  working_lead: 'Lead', close_convert_lead: 'Lead', close_unconvert_lead: 'Lead',
+  login: 'Auth', logout: 'Auth', sign_up: 'Auth',
+  select_content: 'Content', share: 'Content', join_group: 'Content',
+  tutorial_begin: 'Onboarding', tutorial_complete: 'Onboarding',
+  level_start: 'Game', level_end: 'Game', level_up: 'Game', post_score: 'Game',
+  unlock_achievement: 'Game', earn_virtual_currency: 'Game', spend_virtual_currency: 'Game',
+  ad_impression: 'Advertising',
+  video_start: 'Video', video_progress: 'Video', video_complete: 'Video',
+  form_start: 'Form', form_submit: 'Form',
+  scroll: 'Engagement'
+};
+
+function labelize(name) {
+  const text = makeString(name).split('_').join(' ');
+  return text.charAt(0).toUpperCase() + text.substring(1);
+}
+
+function firstDefined(list) {
+  return list.filter(function (v) { return v !== undefined && v !== null && v !== ''; })[0];
+}
+
+function itemsOf(ev) {
+  return getType(ev.items) === 'array' ? ev.items : [];
+}
+
+function autoEventName(ev) {
+  const name = ev.event_name;
+  const category = CATEGORY_BY_EVENT[name];
+  const firstItem = itemsOf(ev)[0] || {};
+  if (category === 'Ecommerce') {
+    if (name === 'purchase' || name === 'refund') return ev.transaction_id;
+    if (name === 'select_promotion' || name === 'view_promotion') return firstDefined([ev.promotion_name, firstItem.promotion_name]);
+    if (name === 'view_item_list' || name === 'select_item') return firstDefined([ev.item_list_name, firstItem.item_list_name]);
+    return firstItem.item_name;
+  }
+  if (category === 'Lead') return ev.lead_source;
+  return undefined;
+}
+
+function matomoEventParams(ev) {
+  return {
+    e_c: firstDefined([data.eventCategory, ev.event_category, CATEGORY_BY_EVENT[ev.event_name], 'Other']),
+    e_a: firstDefined([data.eventAction, ev.event_action, labelize(ev.event_name)]),
+    e_n: firstDefined([data.eventName, ev.event_label, autoEventName(ev)]),
+    e_v: toNumber(firstDefined([data.eventValue, ev.value]))
+  };
+}
+
+function ga4BaseHit(ev) {
+  const hit = {
+    idsite: makeString(data.idSite),
+    rec: '1',
+    url: ev.page_location,
+    urlref: ev.page_referrer,
+    cip: ev.ip_override,
+    ua: ev.user_agent,
+    lang: ev.language,
+    res: ev.screen_resolution,
+    uid: ev.user_id
+  };
+  if (ev.client_id) {
+    const clientId = makeString(ev.client_id);
+    const visitorId = sha256Sync(clientId, { outputEncoding: 'hex' }).substring(0, 16);
+    hit._id = visitorId;
+    hit.cid = visitorId;
+    hit.pv_id = sha256Sync(clientId + '|' + makeString(ev.ga_session_id || '') + '|' + makeString(ev.page_location || ''), { outputEncoding: 'hex' }).substring(0, 6);
+  }
+  (data.dimensions || []).forEach(function (row) {
+    const value = ev[row.key];
+    if (row.dimensionId && value !== undefined && value !== null && value !== '') {
+      hit['dimension' + row.dimensionId] = value;
+    }
+  });
+  return hit;
+}
+
+// Replaced in Task 8.
+function ecommerceHits(ev, base) {
   return [];
+}
+
+// Replaced in Task 8.
+function goalHits(ev, base) {
+  return [];
+}
+
+function buildGa4Hits(ev) {
+  const name = ev.event_name;
+  const excluded = splitList(data.excludedEvents);
+  if (!name || excluded.indexOf(name) !== -1) return [];
+  const base = ga4BaseHit(ev);
+  const hits = [];
+  if (name === 'page_view') {
+    hits.push(extend(base, { action_name: ev.page_title }));
+  } else if (name === 'search' || name === 'view_search_results') {
+    hits.push(extend(base, {
+      search: ev.search_term,
+      search_cat: data.searchCategoryKey ? ev[data.searchCategoryKey] : undefined,
+      search_count: data.searchCountKey ? ev[data.searchCountKey] : undefined
+    }));
+  } else if (name === 'file_download') {
+    hits.push(extend(base, { download: ev.link_url }));
+  } else if (name === 'click' && (ev.outbound === true || ev.outbound === 'true')) {
+    hits.push(extend(base, { link: ev.link_url }));
+  } else {
+    hits.push(extend(base, matomoEventParams(ev)));
+    ecommerceHits(ev, base).forEach(function (h) { hits.push(h); });
+  }
+  goalHits(ev, base).forEach(function (h) { hits.push(h); });
+  return hits.map(compact);
 }
 
 // ---- main ----

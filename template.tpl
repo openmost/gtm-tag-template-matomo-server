@@ -422,9 +422,123 @@ function buildReplayHits(ev, raw) {
   return [hit];
 }
 
-// Replaced in Task 7.
-function buildGa4Hits(ev) {
+const CATEGORY_BY_EVENT = {
+  add_payment_info: 'Ecommerce', add_shipping_info: 'Ecommerce', add_to_cart: 'Ecommerce',
+  add_to_wishlist: 'Ecommerce', begin_checkout: 'Ecommerce', purchase: 'Ecommerce',
+  refund: 'Ecommerce', remove_from_cart: 'Ecommerce', select_item: 'Ecommerce',
+  select_promotion: 'Ecommerce', view_cart: 'Ecommerce', view_item: 'Ecommerce',
+  view_item_list: 'Ecommerce', view_promotion: 'Ecommerce',
+  generate_lead: 'Lead', qualify_lead: 'Lead', disqualify_lead: 'Lead',
+  working_lead: 'Lead', close_convert_lead: 'Lead', close_unconvert_lead: 'Lead',
+  login: 'Auth', logout: 'Auth', sign_up: 'Auth',
+  select_content: 'Content', share: 'Content', join_group: 'Content',
+  tutorial_begin: 'Onboarding', tutorial_complete: 'Onboarding',
+  level_start: 'Game', level_end: 'Game', level_up: 'Game', post_score: 'Game',
+  unlock_achievement: 'Game', earn_virtual_currency: 'Game', spend_virtual_currency: 'Game',
+  ad_impression: 'Advertising',
+  video_start: 'Video', video_progress: 'Video', video_complete: 'Video',
+  form_start: 'Form', form_submit: 'Form',
+  scroll: 'Engagement'
+};
+
+function labelize(name) {
+  const text = makeString(name).split('_').join(' ');
+  return text.charAt(0).toUpperCase() + text.substring(1);
+}
+
+function firstDefined(list) {
+  return list.filter(function (v) { return v !== undefined && v !== null && v !== ''; })[0];
+}
+
+function itemsOf(ev) {
+  return getType(ev.items) === 'array' ? ev.items : [];
+}
+
+function autoEventName(ev) {
+  const name = ev.event_name;
+  const category = CATEGORY_BY_EVENT[name];
+  const firstItem = itemsOf(ev)[0] || {};
+  if (category === 'Ecommerce') {
+    if (name === 'purchase' || name === 'refund') return ev.transaction_id;
+    if (name === 'select_promotion' || name === 'view_promotion') return firstDefined([ev.promotion_name, firstItem.promotion_name]);
+    if (name === 'view_item_list' || name === 'select_item') return firstDefined([ev.item_list_name, firstItem.item_list_name]);
+    return firstItem.item_name;
+  }
+  if (category === 'Lead') return ev.lead_source;
+  return undefined;
+}
+
+function matomoEventParams(ev) {
+  return {
+    e_c: firstDefined([data.eventCategory, ev.event_category, CATEGORY_BY_EVENT[ev.event_name], 'Other']),
+    e_a: firstDefined([data.eventAction, ev.event_action, labelize(ev.event_name)]),
+    e_n: firstDefined([data.eventName, ev.event_label, autoEventName(ev)]),
+    e_v: toNumber(firstDefined([data.eventValue, ev.value]))
+  };
+}
+
+function ga4BaseHit(ev) {
+  const hit = {
+    idsite: makeString(data.idSite),
+    rec: '1',
+    url: ev.page_location,
+    urlref: ev.page_referrer,
+    cip: ev.ip_override,
+    ua: ev.user_agent,
+    lang: ev.language,
+    res: ev.screen_resolution,
+    uid: ev.user_id
+  };
+  if (ev.client_id) {
+    const clientId = makeString(ev.client_id);
+    const visitorId = sha256Sync(clientId, { outputEncoding: 'hex' }).substring(0, 16);
+    hit._id = visitorId;
+    hit.cid = visitorId;
+    hit.pv_id = sha256Sync(clientId + '|' + makeString(ev.ga_session_id || '') + '|' + makeString(ev.page_location || ''), { outputEncoding: 'hex' }).substring(0, 6);
+  }
+  (data.dimensions || []).forEach(function (row) {
+    const value = ev[row.key];
+    if (row.dimensionId && value !== undefined && value !== null && value !== '') {
+      hit['dimension' + row.dimensionId] = value;
+    }
+  });
+  return hit;
+}
+
+// Replaced in Task 8.
+function ecommerceHits(ev, base) {
   return [];
+}
+
+// Replaced in Task 8.
+function goalHits(ev, base) {
+  return [];
+}
+
+function buildGa4Hits(ev) {
+  const name = ev.event_name;
+  const excluded = splitList(data.excludedEvents);
+  if (!name || excluded.indexOf(name) !== -1) return [];
+  const base = ga4BaseHit(ev);
+  const hits = [];
+  if (name === 'page_view') {
+    hits.push(extend(base, { action_name: ev.page_title }));
+  } else if (name === 'search' || name === 'view_search_results') {
+    hits.push(extend(base, {
+      search: ev.search_term,
+      search_cat: data.searchCategoryKey ? ev[data.searchCategoryKey] : undefined,
+      search_count: data.searchCountKey ? ev[data.searchCountKey] : undefined
+    }));
+  } else if (name === 'file_download') {
+    hits.push(extend(base, { download: ev.link_url }));
+  } else if (name === 'click' && (ev.outbound === true || ev.outbound === 'true')) {
+    hits.push(extend(base, { link: ev.link_url }));
+  } else {
+    hits.push(extend(base, matomoEventParams(ev)));
+    ecommerceHits(ev, base).forEach(function (h) { hits.push(h); });
+  }
+  goalHits(ev, base).forEach(function (h) { hits.push(h); });
+  return hits.map(compact);
 }
 
 // ---- main ----
@@ -594,6 +708,127 @@ scenarios:
     const r = run({ event_name: 'page_view', client_id: '1.2' });
     assertThat(r.length).isEqualTo(0);
     assertApi('gtmOnFailure').wasCalled();
+- name: GA4 page_view maps to a Matomo pageview with hashed visitor id
+  code: |-
+    const r = run(ga4Event({ event_name: 'page_view', user_id: 'u42', 'x-ga-gcs': 'G111' }), { idSite: '3' });
+    const visitorId = sha256Sync('123.456', { outputEncoding: 'hex' }).substring(0, 16);
+    assertThat(r.length).isEqualTo(1);
+    const p = r[0].params;
+    assertThat(p.idsite).isEqualTo('3');
+    assertThat(p.rec).isEqualTo('1');
+    assertThat(p.url).isEqualTo('https://www.example.com/p');
+    assertThat(p.action_name).isEqualTo('Page');
+    assertThat(p.urlref).isEqualTo('https://google.com/');
+    assertThat(p.cip).isEqualTo('203.0.113.9');
+    assertThat(p.ua).isEqualTo('UA-X');
+    assertThat(p.lang).isEqualTo('fr-fr');
+    assertThat(p.res).isEqualTo('1920x1080');
+    assertThat(p.uid).isEqualTo('u42');
+    assertThat(p._id).isEqualTo(visitorId);
+    assertThat(p._id.length).isEqualTo(16);
+    assertThat(p.cid).isEqualTo(visitorId);
+    assertThat(p.pv_id).isEqualTo(sha256Sync('123.456|789|https://www.example.com/p', { outputEncoding: 'hex' }).substring(0, 6));
+    assertThat(p.e_c).isUndefined();
+- name: excluded GA4 events are not sent
+  code: |-
+    const r = run(ga4Event({ event_name: 'session_start' }), { idSite: '1' });
+    assertThat(r.length).isEqualTo(0);
+    assertApi('gtmOnSuccess').wasCalled();
+- name: GA4 site search maps to Matomo search with configured keys
+  code: |-
+    const r = run(ga4Event({ event_name: 'view_search_results', search_term: 'shoes', search_type: 'products', results: 12 }), { idSite: '1', searchCategoryKey: 'search_type', searchCountKey: 'results' });
+    assertThat(r[0].params.search).isEqualTo('shoes');
+    assertThat(r[0].params.search_cat).isEqualTo('products');
+    assertThat(r[0].params.search_count).isEqualTo('12');
+    assertThat(r[0].params.action_name).isUndefined();
+- name: GA4 file_download and outbound click map to download and outlink
+  code: |-
+    const d = run(ga4Event({ event_name: 'file_download', link_url: 'https://www.example.com/f.pdf' }), { idSite: '1' });
+    assertThat(d[0].params.download).isEqualTo('https://www.example.com/f.pdf');
+    assertThat(d[0].params.e_c).isUndefined();
+    const l = run(ga4Event({ event_name: 'click', link_url: 'https://other.com/', outbound: true }), { idSite: '1' });
+    assertThat(l[0].params.link).isEqualTo('https://other.com/');
+- name: non-outbound click becomes an Other event
+  code: |-
+    const r = run(ga4Event({ event_name: 'click', link_url: 'https://www.example.com/a' }), { idSite: '1' });
+    assertThat(r[0].params.e_c).isEqualTo('Other');
+    assertThat(r[0].params.e_a).isEqualTo('Click');
+- name: automatic categories and labelized actions
+  code: |-
+    const cases = [
+      ['add_to_cart', 'Ecommerce', 'Add to cart'],
+      ['begin_checkout', 'Ecommerce', 'Begin checkout'],
+      ['generate_lead', 'Lead', 'Generate lead'],
+      ['close_convert_lead', 'Lead', 'Close convert lead'],
+      ['login', 'Auth', 'Login'],
+      ['logout', 'Auth', 'Logout'],
+      ['sign_up', 'Auth', 'Sign up'],
+      ['share', 'Content', 'Share'],
+      ['join_group', 'Content', 'Join group'],
+      ['tutorial_begin', 'Onboarding', 'Tutorial begin'],
+      ['level_up', 'Game', 'Level up'],
+      ['spend_virtual_currency', 'Game', 'Spend virtual currency'],
+      ['ad_impression', 'Advertising', 'Ad impression'],
+      ['video_start', 'Video', 'Video start'],
+      ['form_submit', 'Form', 'Form submit'],
+      ['scroll', 'Engagement', 'Scroll'],
+      ['my_custom_event', 'Other', 'My custom event']
+    ];
+    cases.forEach(function (c) {
+      const r = run(ga4Event({ event_name: c[0] }), { idSite: '1' });
+      assertThat(r[0].params.e_c, c[0]).isEqualTo(c[1]);
+      assertThat(r[0].params.e_a, c[0]).isEqualTo(c[2]);
+    });
+- name: event_category and event_action parameters override automatic values
+  code: |-
+    const r = run(ga4Event({ event_name: 'add_to_cart', event_category: 'Shop', event_action: 'Basket add' }), { idSite: '1' });
+    assertThat(r[0].params.e_c).isEqualTo('Shop');
+    assertThat(r[0].params.e_a).isEqualTo('Basket add');
+- name: tag fields override event parameters
+  code: |-
+    const r = run(ga4Event({ event_name: 'login', event_category: 'Shop' }), { idSite: '1', eventCategory: 'Forced', eventAction: 'Act', eventName: 'Nm', eventValue: '7' });
+    assertThat(r[0].params.e_c).isEqualTo('Forced');
+    assertThat(r[0].params.e_a).isEqualTo('Act');
+    assertThat(r[0].params.e_n).isEqualTo('Nm');
+    assertThat(r[0].params.e_v).isEqualTo('7');
+- name: automatic event names
+  code: |-
+    const cases = [
+      [{ event_name: 'add_to_cart', items: [{ item_name: 'Shoe' }] }, 'Shoe'],
+      [{ event_name: 'view_promotion', promotion_name: 'Summer' }, 'Summer'],
+      [{ event_name: 'select_promotion', items: [{ promotion_name: 'Winter' }] }, 'Winter'],
+      [{ event_name: 'view_item_list', item_list_name: 'Related' }, 'Related'],
+      [{ event_name: 'refund', transaction_id: 'T9' }, 'T9'],
+      [{ event_name: 'generate_lead', lead_source: 'Newsletter' }, 'Newsletter'],
+      [{ event_name: 'generate_lead', lead_source: 'Newsletter', event_label: 'Forced label' }, 'Forced label']
+    ];
+    cases.forEach(function (c) {
+      const r = run(ga4Event(c[0]), { idSite: '1' });
+      assertThat(r[0].params.e_n, c[0].event_name).isEqualTo(c[1]);
+    });
+    const login = run(ga4Event({ event_name: 'login' }), { idSite: '1' });
+    assertThat(login[0].params.e_n).isUndefined();
+- name: numeric value becomes event value, non-numeric is dropped
+  code: |-
+    const ok = run(ga4Event({ event_name: 'generate_lead', value: '12.5' }), { idSite: '1' });
+    assertThat(ok[0].params.e_v).isEqualTo('12.5');
+    const ko = run(ga4Event({ event_name: 'generate_lead', value: 'abc' }), { idSite: '1' });
+    assertThat(ko[0].params.e_v).isUndefined();
+- name: custom dimensions are mapped from event data
+  code: |-
+    const r = run(ga4Event({ event_name: 'page_view', page_type: 'product' }), { idSite: '1', dimensions: [{ key: 'page_type', dimensionId: '2' }, { key: 'missing', dimensionId: '3' }] });
+    assertThat(r[0].params.dimension2).isEqualTo('product');
+    assertThat(r[0].params.dimension3).isUndefined();
+- name: GA4 consent denied strips identifiers, granted or absent keeps them
+  code: |-
+    const denied = run(ga4Event({ event_name: 'page_view', user_id: 'u1', 'x-ga-gcs': 'G100' }), { idSite: '1' });
+    assertThat(denied[0].params._id).isUndefined();
+    assertThat(denied[0].params.cid).isUndefined();
+    assertThat(denied[0].params.uid).isUndefined();
+    const granted = run(ga4Event({ event_name: 'page_view', 'x-ga-gcs': 'G101' }), { idSite: '1' });
+    assertThat(granted[0].params._id).isDefined();
+    const absent = run(ga4Event({ event_name: 'page_view' }), { idSite: '1' });
+    assertThat(absent[0].params._id).isDefined();
 setup: |-
   const Object = require('Object');
   const decodeUriComponent = require('decodeUriComponent');
