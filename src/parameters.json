@@ -1,0 +1,137 @@
+[
+  {
+    "type": "TEXT",
+    "name": "matomoUrl",
+    "displayName": "Matomo instance URL",
+    "simpleValueType": true,
+    "help": "Base URL of your Matomo instance, e.g. https://analytics.example.com",
+    "valueValidators": [{ "type": "NON_EMPTY" }, { "type": "REGEX", "args": ["^https?://.+"] }]
+  },
+  {
+    "type": "TEXT",
+    "name": "tokenAuth",
+    "displayName": "Auth token (token_auth)",
+    "simpleValueType": true,
+    "help": "Token of a user with at least write access to the site. Required to send the real visitor IP (cip). Sent in the POST body only.",
+    "valueValidators": [{ "type": "NON_EMPTY" }]
+  },
+  {
+    "type": "TEXT",
+    "name": "idSite",
+    "displayName": "Site ID",
+    "simpleValueType": true,
+    "help": "Required for GA4 events. For events from the Matomo Client, leave empty to keep the site ID of the hit, or set it to override."
+  },
+  {
+    "type": "GROUP",
+    "name": "consentGroup",
+    "displayName": "Consent",
+    "groupStyle": "ZIPPY_OPEN",
+    "subParams": [
+      {
+        "type": "SELECT",
+        "name": "consentSource",
+        "displayName": "Analytics consent source",
+        "macrosInSelect": false,
+        "selectItems": [
+          { "value": "auto", "displayValue": "Automatic (GA4 consent mode for GA4 events, matomo.js for Matomo Client events)" },
+          { "value": "variable", "displayValue": "Variable" }
+        ],
+        "simpleValueType": true,
+        "defaultValue": "auto"
+      },
+      {
+        "type": "TEXT",
+        "name": "consentValue",
+        "displayName": "Consent value (granted / denied, true / false)",
+        "simpleValueType": true,
+        "enablingConditions": [{ "paramName": "consentSource", "paramValue": "variable", "type": "EQUALS" }]
+      },
+      {
+        "type": "CHECKBOX",
+        "name": "stripUidOnDenied",
+        "checkboxText": "Also remove the User ID when consent is denied",
+        "simpleValueType": true,
+        "defaultValue": true
+      }
+    ]
+  },
+  {
+    "type": "GROUP",
+    "name": "ga4Group",
+    "displayName": "GA4 events mapping",
+    "groupStyle": "ZIPPY_CLOSED",
+    "subParams": [
+      {
+        "type": "TEXT",
+        "name": "excludedEvents",
+        "displayName": "Events not sent to Matomo (comma-separated)",
+        "simpleValueType": true,
+        "defaultValue": "session_start, first_visit, user_engagement"
+      },
+      { "type": "TEXT", "name": "eventCategory", "displayName": "Force event category", "simpleValueType": true },
+      { "type": "TEXT", "name": "eventAction", "displayName": "Force event action", "simpleValueType": true },
+      { "type": "TEXT", "name": "eventName", "displayName": "Force event name", "simpleValueType": true },
+      { "type": "TEXT", "name": "eventValue", "displayName": "Force event value", "simpleValueType": true },
+      { "type": "TEXT", "name": "searchCategoryKey", "displayName": "Event data key of the search category", "simpleValueType": true },
+      { "type": "TEXT", "name": "searchCountKey", "displayName": "Event data key of the search results count", "simpleValueType": true },
+      {
+        "type": "SIMPLE_TABLE",
+        "name": "goals",
+        "displayName": "Goals",
+        "simpleTableColumns": [
+          { "defaultValue": "", "displayName": "GA4 event name", "name": "eventName", "type": "TEXT" },
+          { "defaultValue": "", "displayName": "Matomo goal ID", "name": "goalId", "type": "TEXT" },
+          {
+            "defaultValue": "no",
+            "displayName": "Use event value as revenue",
+            "name": "useValue",
+            "type": "SELECT",
+            "selectItems": [{ "value": "no", "displayValue": "No" }, { "value": "yes", "displayValue": "Yes" }]
+          }
+        ]
+      },
+      {
+        "type": "SIMPLE_TABLE",
+        "name": "dimensions",
+        "displayName": "Custom dimensions",
+        "simpleTableColumns": [
+          { "defaultValue": "", "displayName": "Event data key", "name": "key", "type": "TEXT" },
+          { "defaultValue": "", "displayName": "Matomo dimension ID", "name": "dimensionId", "type": "TEXT" }
+        ]
+      },
+      {
+        "type": "TEXT",
+        "name": "cartItems",
+        "displayName": "Full cart content (variable returning GA4 items)",
+        "simpleValueType": true,
+        "help": "Matomo needs the whole cart on every cart update. When set, add_to_cart / remove_from_cart / view_cart also send a Matomo cart update."
+      },
+      {
+        "type": "CHECKBOX",
+        "name": "sendProductViews",
+        "checkboxText": "Also send view_item / view_item_list as Matomo product/category page views",
+        "simpleValueType": true,
+        "defaultValue": false
+      }
+    ]
+  },
+  {
+    "type": "GROUP",
+    "name": "advancedGroup",
+    "displayName": "Advanced",
+    "groupStyle": "ZIPPY_CLOSED",
+    "subParams": [
+      {
+        "type": "SIMPLE_TABLE",
+        "name": "overrides",
+        "displayName": "Set or override Matomo parameters",
+        "simpleTableColumns": [
+          { "defaultValue": "", "displayName": "Parameter", "name": "key", "type": "TEXT" },
+          { "defaultValue": "", "displayName": "Value", "name": "value", "type": "TEXT" }
+        ]
+      },
+      { "type": "TEXT", "name": "removeParams", "displayName": "Remove Matomo parameters (comma-separated)", "simpleValueType": true }
+    ]
+  }
+]

@@ -1,0 +1,147 @@
+scenarios:
+- name: replays a Matomo hit losslessly with plugin parameters
+  code: |-
+    const r = run(replayEvent({ fa_id: 'f1', fa_fields: '[{"fn":"email"}]', send_image: '0' }));
+    assertThat(r.length).isEqualTo(1);
+    assertThat(r[0].url).isEqualTo('https://matomo.example.com/matomo.php');
+    assertThat(r[0].options.method).isEqualTo('POST');
+    assertThat(r[0].params.fa_id).isEqualTo('f1');
+    assertThat(r[0].params.fa_fields).isEqualTo('[{"fn":"email"}]');
+    assertThat(r[0].params.cip).isEqualTo('203.0.113.9');
+    assertThat(r[0].params.ua).isEqualTo('UA-X');
+    assertThat(r[0].params.lang).isEqualTo('fr-FR');
+    assertThat(r[0].params.token_auth).isEqualTo('tok123');
+    assertThat(r[0].body.indexOf('send_image=0')).isEqualTo(r[0].body.lastIndexOf('send_image=0'));
+    assertApi('gtmOnSuccess').wasCalled();
+- name: token_auth never appears in the URL
+  code: |-
+    const r = run(replayEvent({}));
+    assertThat(r[0].url.indexOf('token')).isEqualTo(-1);
+- name: forwards request context headers
+  code: |-
+    const ev = replayEvent({});
+    ev['x-matomo-request'] = { referer: 'https://www.example.com/', dnt: '1', ignore_cookie: '*' };
+    const r = run(ev);
+    assertThat(r[0].options.headers['referer']).isEqualTo('https://www.example.com/');
+    assertThat(r[0].options.headers['dnt']).isEqualTo('1');
+    assertThat(r[0].options.headers['Cookie']).isEqualTo('matomo_ignore=*');
+    assertThat(r[0].options.headers['User-Agent']).isEqualTo('UA-X');
+    assertThat(r[0].options.headers['Content-Type']).isEqualTo('application/x-www-form-urlencoded; charset=UTF-8');
+- name: site ID field overrides the hit site ID
+  code: |-
+    const r = run(replayEvent({}), { idSite: '7' });
+    assertThat(r[0].params.idsite).isEqualTo('7');
+- name: removes and overrides parameters
+  code: |-
+    const r = run(replayEvent({ fa_fields: 'x' }), { removeParams: 'fa_fields, _id', overrides: [{ key: 'dimension1', value: 'server' }] });
+    assertThat(r[0].params.fa_fields).isUndefined();
+    assertThat(r[0].params._id).isUndefined();
+    assertThat(r[0].params.dimension1).isEqualTo('server');
+- name: array parameters are sent as repeated keys and UTF-8 is encoded
+  code: |-
+    const r = run(replayEvent({ 'fa_fp[]': ['a', 'b'], action_name: 'Café crème' }));
+    assertThat(r[0].body).contains('fa_fp%5B%5D=a&fa_fp%5B%5D=b');
+    assertThat(r[0].body).contains('action_name=Caf%C3%A9%20cr%C3%A8me');
+- name: consent variable denied strips visitor identifiers
+  code: |-
+    const r = run(replayEvent({ cid: '0123456789abcdef', _idn: '0', uid: 'u1' }), { consentSource: 'variable', consentValue: 'denied' });
+    assertThat(r[0].params._id).isUndefined();
+    assertThat(r[0].params.cid).isUndefined();
+    assertThat(r[0].params._idn).isUndefined();
+    assertThat(r[0].params.uid).isUndefined();
+- name: consent denied keeps uid when the option is off
+  code: |-
+    const r = run(replayEvent({ uid: 'u1' }), { consentSource: 'variable', consentValue: 'false', stripUidOnDenied: false });
+    assertThat(r[0].params.uid).isEqualTo('u1');
+    assertThat(r[0].params._id).isUndefined();
+- name: automatic consent keeps identifiers of Matomo client hits
+  code: |-
+    const r = run(replayEvent({ uid: 'u1' }));
+    assertThat(r[0].params._id).isEqualTo('0123456789abcdef');
+    assertThat(r[0].params.uid).isEqualTo('u1');
+- name: Matomo error status calls gtmOnFailure
+  code: |-
+    run(replayEvent({}), {}, 400);
+    assertApi('gtmOnFailure').wasCalled();
+    assertApi('gtmOnSuccess').wasNotCalled();
+- name: GA4 event without site ID fails without sending
+  code: |-
+    const r = run({ event_name: 'page_view', client_id: '1.2' });
+    assertThat(r.length).isEqualTo(0);
+    assertApi('gtmOnFailure').wasCalled();
+setup: |-
+  const Object = require('Object');
+  const decodeUriComponent = require('decodeUriComponent');
+  const sha256Sync = require('sha256Sync');
+  const baseData = {
+    matomoUrl: 'https://matomo.example.com/',
+    tokenAuth: 'tok123',
+    idSite: '',
+    consentSource: 'auto',
+    consentValue: '',
+    stripUidOnDenied: true,
+    excludedEvents: 'session_start, first_visit, user_engagement',
+    eventCategory: '',
+    eventAction: '',
+    eventName: '',
+    eventValue: '',
+    searchCategoryKey: '',
+    searchCountKey: '',
+    goals: [],
+    dimensions: [],
+    cartItems: '',
+    sendProductViews: false,
+    overrides: [],
+    removeParams: ''
+  };
+  function withData(extra) {
+    const d = {};
+    Object.keys(baseData).forEach(function (k) { d[k] = baseData[k]; });
+    Object.keys(extra || {}).forEach(function (k) { d[k] = extra[k]; });
+    return d;
+  }
+  function parseBody(body) {
+    const params = {};
+    body.split('&').forEach(function (pair) {
+      const i = pair.indexOf('=');
+      params[decodeUriComponent(pair.substring(0, i))] = decodeUriComponent(pair.substring(i + 1));
+    });
+    return params;
+  }
+  function run(eventData, extra, status) {
+    const requests = [];
+    mock('getAllEventData', eventData);
+    mock('sendHttpRequest', function (url, cb, options, body) {
+      requests.push({ url: url, options: options, body: body, params: parseBody(body) });
+      cb(status || 204, {}, '');
+    });
+    runCode(withData(extra));
+    return requests;
+  }
+  function replayEvent(hitExtra) {
+    const hit = { idsite: '1', rec: '1', url: 'https://www.example.com/', _id: '0123456789abcdef' };
+    Object.keys(hitExtra).forEach(function (k) { hit[k] = hitExtra[k]; });
+    return {
+      event_name: 'page_view',
+      'x-matomo-hit': hit,
+      'x-matomo-idsite': '1',
+      ip_override: '203.0.113.9',
+      user_agent: 'UA-X',
+      language: 'fr-FR'
+    };
+  }
+  function ga4Event(extra) {
+    const ev = {
+      client_id: '123.456',
+      ga_session_id: '789',
+      page_location: 'https://www.example.com/p',
+      page_title: 'Page',
+      page_referrer: 'https://google.com/',
+      ip_override: '203.0.113.9',
+      user_agent: 'UA-X',
+      language: 'fr-fr',
+      screen_resolution: '1920x1080'
+    };
+    Object.keys(extra).forEach(function (k) { ev[k] = extra[k]; });
+    return ev;
+  }
