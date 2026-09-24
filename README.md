@@ -1,4 +1,4 @@
-# Matomo (server) — server-side Google Tag Manager tag template
+# Matomo — server-side Google Tag Manager tag template
 
 Send hits to Matomo from your server-side GTM container. One template, two levels:
 
