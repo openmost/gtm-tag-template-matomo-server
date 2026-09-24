@@ -86,7 +86,14 @@ ___TEMPLATE_PARAMETERS___
     "name": "idSite",
     "displayName": "Site ID",
     "simpleValueType": true,
-    "help": "Required for GA4 events. For events from the Matomo Client, leave empty to keep the site ID of the hit, or set it to override."
+    "help": "Required for GA4 events. Hits from the Matomo Client keep their own site ID, unless the option below is ticked."
+  },
+  {
+    "type": "CHECKBOX",
+    "name": "overrideSiteId",
+    "checkboxText": "Override the site ID of Matomo Client hits with this site ID",
+    "simpleValueType": true,
+    "defaultValue": false
   },
   {
     "type": "GROUP",
@@ -464,7 +471,7 @@ function sendHits(hits, headers) {
 
 function buildReplayHits(ev, raw) {
   const hit = copyObject(raw);
-  if (data.idSite) hit.idsite = makeString(data.idSite);
+  if (data.overrideSiteId && data.idSite) hit.idsite = makeString(data.idSite);
   if (ev.ip_override) hit.cip = ev.ip_override;
   if (ev.user_agent) hit.ua = ev.user_agent;
   if (!hit.lang && ev.language) hit.lang = ev.language;
@@ -692,7 +699,7 @@ function buildCustomEventHits(ev, raw) {
       if (raw[k] !== undefined) base[k] = raw[k];
     });
     base.rec = '1';
-    if (data.idSite) base.idsite = makeString(data.idSite);
+    if (data.overrideSiteId && data.idSite) base.idsite = makeString(data.idSite);
     if (ev.ip_override) base.cip = ev.ip_override;
     if (ev.user_agent) base.ua = ev.user_agent;
   } else {
@@ -838,9 +845,15 @@ scenarios:
     assertThat(r[0].options.headers['Cookie']).isEqualTo('matomo_ignore=*');
     assertThat(r[0].options.headers['User-Agent']).isEqualTo('UA-X');
     assertThat(r[0].options.headers['Content-Type']).isEqualTo('application/x-www-form-urlencoded; charset=UTF-8');
-- name: site ID field overrides the hit site ID
+- name: site ID field does not change Matomo client hits by default
   code: |-
     const r = run(replayEvent({}), { idSite: '7' });
+    assertThat(r[0].params.idsite).isEqualTo('1');
+    const e = run(replayEvent({}), { idSite: '7', trackingType: 'event', eventCategory: 'C', eventAction: 'A' });
+    assertThat(e[0].params.idsite).isEqualTo('1');
+- name: site ID field overrides Matomo client hits when the option is ticked
+  code: |-
+    const r = run(replayEvent({}), { idSite: '7', overrideSiteId: true });
     assertThat(r[0].params.idsite).isEqualTo('7');
 - name: removes and overrides parameters
   code: |-
@@ -1147,7 +1160,8 @@ setup: |-
     sendProductViews: false,
     overrides: [],
     removeParams: '',
-    trackingType: 'auto'
+    trackingType: 'auto',
+    overrideSiteId: false
   };
   function withData(extra) {
     const d = {};

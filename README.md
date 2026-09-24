@@ -72,7 +72,7 @@ For hits from the Matomo Client, *Automatic* follows the `x-matomo-consent` sign
 ## Advanced
 
 - *Set or override Matomo parameters* and *Remove Matomo parameters* apply to every hit, in both modes.
-- *Site ID* overrides the site of hits coming from the Matomo Client.
+- Hits coming from the Matomo Client keep their own site ID. Tick *Override the site ID of Matomo Client hits* to send them to the *Site ID* of the tag instead.
 
 ## License
 

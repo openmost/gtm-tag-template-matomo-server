@@ -53,7 +53,14 @@
     "name": "idSite",
     "displayName": "Site ID",
     "simpleValueType": true,
-    "help": "Required for GA4 events. For events from the Matomo Client, leave empty to keep the site ID of the hit, or set it to override."
+    "help": "Required for GA4 events. Hits from the Matomo Client keep their own site ID, unless the option below is ticked."
+  },
+  {
+    "type": "CHECKBOX",
+    "name": "overrideSiteId",
+    "checkboxText": "Override the site ID of Matomo Client hits with this site ID",
+    "simpleValueType": true,
+    "defaultValue": false
   },
   {
     "type": "GROUP",

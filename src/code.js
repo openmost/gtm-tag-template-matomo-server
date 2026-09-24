@@ -139,7 +139,7 @@ function sendHits(hits, headers) {
 
 function buildReplayHits(ev, raw) {
   const hit = copyObject(raw);
-  if (data.idSite) hit.idsite = makeString(data.idSite);
+  if (data.overrideSiteId && data.idSite) hit.idsite = makeString(data.idSite);
   if (ev.ip_override) hit.cip = ev.ip_override;
   if (ev.user_agent) hit.ua = ev.user_agent;
   if (!hit.lang && ev.language) hit.lang = ev.language;
@@ -367,7 +367,7 @@ function buildCustomEventHits(ev, raw) {
       if (raw[k] !== undefined) base[k] = raw[k];
     });
     base.rec = '1';
-    if (data.idSite) base.idsite = makeString(data.idSite);
+    if (data.overrideSiteId && data.idSite) base.idsite = makeString(data.idSite);
     if (ev.ip_override) base.cip = ev.ip_override;
     if (ev.user_agent) base.ua = ev.user_agent;
   } else {

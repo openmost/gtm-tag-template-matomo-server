@@ -27,9 +27,15 @@ scenarios:
     assertThat(r[0].options.headers['Cookie']).isEqualTo('matomo_ignore=*');
     assertThat(r[0].options.headers['User-Agent']).isEqualTo('UA-X');
     assertThat(r[0].options.headers['Content-Type']).isEqualTo('application/x-www-form-urlencoded; charset=UTF-8');
-- name: site ID field overrides the hit site ID
+- name: site ID field does not change Matomo client hits by default
   code: |-
     const r = run(replayEvent({}), { idSite: '7' });
+    assertThat(r[0].params.idsite).isEqualTo('1');
+    const e = run(replayEvent({}), { idSite: '7', trackingType: 'event', eventCategory: 'C', eventAction: 'A' });
+    assertThat(e[0].params.idsite).isEqualTo('1');
+- name: site ID field overrides Matomo client hits when the option is ticked
+  code: |-
+    const r = run(replayEvent({}), { idSite: '7', overrideSiteId: true });
     assertThat(r[0].params.idsite).isEqualTo('7');
 - name: removes and overrides parameters
   code: |-
@@ -336,7 +342,8 @@ setup: |-
     sendProductViews: false,
     overrides: [],
     removeParams: '',
-    trackingType: 'auto'
+    trackingType: 'auto',
+    overrideSiteId: false
   };
   function withData(extra) {
     const d = {};
