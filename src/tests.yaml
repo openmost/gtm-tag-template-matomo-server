@@ -13,7 +13,7 @@ scenarios:
     assertThat(r[0].params.token_auth).isEqualTo('tok123');
     assertThat(r[0].body.indexOf('send_image=0')).isEqualTo(r[0].body.lastIndexOf('send_image=0'));
     assertApi('gtmOnSuccess').wasCalled();
-- name: token_auth never appears in the URL
+- name: token auth never appears in the URL
   code: |-
     const r = run(replayEvent({}));
     assertThat(r[0].url.indexOf('token')).isEqualTo(-1);
@@ -37,7 +37,7 @@ scenarios:
     assertThat(r[0].params.fa_fields).isUndefined();
     assertThat(r[0].params._id).isUndefined();
     assertThat(r[0].params.dimension1).isEqualTo('server');
-- name: array parameters are sent as repeated keys and UTF-8 is encoded
+- name: array parameters are sent as repeated keys and UTF8 is encoded
   code: |-
     const r = run(replayEvent({ 'fa_fp[]': ['a', 'b'], action_name: 'Café crème' }));
     assertThat(r[0].body).contains('fa_fp%5B%5D=a&fa_fp%5B%5D=b');
@@ -69,7 +69,7 @@ scenarios:
     const r = run({ event_name: 'page_view', client_id: '1.2' });
     assertThat(r.length).isEqualTo(0);
     assertApi('gtmOnFailure').wasCalled();
-- name: GA4 page_view maps to a Matomo pageview with hashed visitor id
+- name: GA4 page view maps to a Matomo pageview with hashed visitor id
   code: |-
     const r = run(ga4Event({ event_name: 'page_view', user_id: 'u42', 'x-ga-gcs': 'G111' }), { idSite: '3' });
     const visitorId = sha256Sync('123.456', { outputEncoding: 'hex' }).substring(0, 16);
@@ -102,14 +102,14 @@ scenarios:
     assertThat(r[0].params.search_cat).isEqualTo('products');
     assertThat(r[0].params.search_count).isEqualTo('12');
     assertThat(r[0].params.action_name).isUndefined();
-- name: GA4 file_download and outbound click map to download and outlink
+- name: GA4 file download and outbound click map to download and outlink
   code: |-
     const d = run(ga4Event({ event_name: 'file_download', link_url: 'https://www.example.com/f.pdf' }), { idSite: '1' });
     assertThat(d[0].params.download).isEqualTo('https://www.example.com/f.pdf');
     assertThat(d[0].params.e_c).isUndefined();
     const l = run(ga4Event({ event_name: 'click', link_url: 'https://other.com/', outbound: true }), { idSite: '1' });
     assertThat(l[0].params.link).isEqualTo('https://other.com/');
-- name: non-outbound click becomes an Other event
+- name: non outbound click becomes an Other event
   code: |-
     const r = run(ga4Event({ event_name: 'click', link_url: 'https://www.example.com/a' }), { idSite: '1' });
     assertThat(r[0].params.e_c).isEqualTo('Other');
@@ -140,7 +140,7 @@ scenarios:
       assertThat(r[0].params.e_c, c[0]).isEqualTo(c[1]);
       assertThat(r[0].params.e_a, c[0]).isEqualTo(c[2]);
     });
-- name: event_category and event_action parameters override automatic values
+- name: event category and event action parameters override automatic values
   code: |-
     const r = run(ga4Event({ event_name: 'add_to_cart', event_category: 'Shop', event_action: 'Basket add' }), { idSite: '1' });
     assertThat(r[0].params.e_c).isEqualTo('Shop');
@@ -169,7 +169,7 @@ scenarios:
     });
     const login = run(ga4Event({ event_name: 'login' }), { idSite: '1' });
     assertThat(login[0].params.e_n).isUndefined();
-- name: numeric value becomes event value, non-numeric is dropped
+- name: numeric value becomes event value and non numeric is dropped
   code: |-
     const ok = run(ga4Event({ event_name: 'generate_lead', value: '12.5' }), { idSite: '1' });
     assertThat(ok[0].params.e_v).isEqualTo('12.5');
@@ -180,7 +180,7 @@ scenarios:
     const r = run(ga4Event({ event_name: 'page_view', page_type: 'product' }), { idSite: '1', dimensions: [{ key: 'page_type', dimensionId: '2' }, { key: 'missing', dimensionId: '3' }] });
     assertThat(r[0].params.dimension2).isEqualTo('product');
     assertThat(r[0].params.dimension3).isUndefined();
-- name: GA4 consent denied strips identifiers, granted or absent keeps them
+- name: GA4 consent denied strips identifiers while granted or absent keeps them
   code: |-
     const denied = run(ga4Event({ event_name: 'page_view', user_id: 'u1', 'x-ga-gcs': 'G100' }), { idSite: '1' });
     assertThat(denied[0].params._id).isUndefined();
