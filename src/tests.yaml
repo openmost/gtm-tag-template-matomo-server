@@ -203,13 +203,25 @@ scenarios:
     const o = r[1].params;
     assertThat(o.idgoal).isEqualTo('0');
     assertThat(o.ec_id).isEqualTo('T1');
-    assertThat(o.revenue).isEqualTo('129.9');
-    assertThat(o.ec_st).isEqualTo('99.9');
+    assertThat(o.revenue).isEqualTo('159.9');
+    assertThat(o.ec_st).isEqualTo('129.9');
     assertThat(o.ec_tx).isEqualTo('20');
     assertThat(o.ec_sh).isEqualTo('10');
     assertThat(o.ec_dt).isEqualTo('10');
     assertThat(o.ec_items).isEqualTo('[["SKU1","Shoe",["Shoes","Men"],59.95,2]]');
     assertThat(o.e_c).isUndefined();
+- name: hits of one event are sent one after another
+  code: |-
+    const callbacks = [];
+    mock('getAllEventData', ga4Event({ event_name: 'purchase', transaction_id: 'T1', value: 10 }));
+    mock('sendHttpRequest', function (url, cb) { callbacks.push(cb); });
+    runCode(withData({ idSite: '1' }));
+    assertThat(callbacks.length).isEqualTo(1);
+    callbacks[0](204, {}, '');
+    assertThat(callbacks.length).isEqualTo(2);
+    assertApi('gtmOnSuccess').wasNotCalled();
+    callbacks[1](204, {}, '');
+    assertApi('gtmOnSuccess').wasCalled();
 - name: purchase without items sends an empty item list
   code: |-
     const r = run(ga4Event({ event_name: 'purchase', transaction_id: 'T2', value: 10 }), { idSite: '1' });

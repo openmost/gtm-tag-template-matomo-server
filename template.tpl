@@ -387,30 +387,28 @@ function encodeHit(hit) {
   return parts.join('&');
 }
 
+// Hits are sent one after another: Matomo must receive them in order to attach them to the same visit.
 function sendHits(hits, headers) {
-  if (!hits.length) {
-    data.gtmOnSuccess();
-    return;
-  }
-  let pending = hits.length;
   let failed = false;
-  hits.forEach(function (hit) {
-    const body = encodeHit(hit) + '&send_image=0&token_auth=' + encodeUriComponent(makeString(data.tokenAuth));
+  const sendNext = function (index) {
+    if (index >= hits.length) {
+      if (failed) {
+        data.gtmOnFailure();
+      } else {
+        data.gtmOnSuccess();
+      }
+      return;
+    }
+    const body = encodeHit(hits[index]) + '&send_image=0&token_auth=' + encodeUriComponent(makeString(data.tokenAuth));
     sendHttpRequest(endpoint, function (statusCode, responseHeaders, responseBody) {
       if (statusCode < 200 || statusCode >= 300) {
         failed = true;
         log('Matomo responded ' + statusCode + ': ' + responseBody);
       }
-      pending = pending - 1;
-      if (pending === 0) {
-        if (failed) {
-          data.gtmOnFailure();
-        } else {
-          data.gtmOnSuccess();
-        }
-      }
+      sendNext(index + 1);
     }, { method: 'POST', headers: headers, timeout: 5000 }, body);
-  });
+  };
+  sendNext(0);
 }
 
 function buildReplayHits(ev, raw) {
@@ -564,14 +562,15 @@ function productViewParams(ev) {
 function ecommerceHits(ev, base) {
   const name = ev.event_name;
   if (name === 'purchase') {
-    const revenue = toNumber(ev.value);
+    // GA4 "value" excludes tax and shipping; Matomo "revenue" is the grand total.
+    const subtotal = toNumber(ev.value);
     const tax = toNumber(ev.tax);
     const shipping = toNumber(ev.shipping);
     return [extend(base, {
       idgoal: '0',
       ec_id: ev.transaction_id,
-      revenue: revenue,
-      ec_st: revenue === undefined ? undefined : round2(revenue - (tax || 0) - (shipping || 0)),
+      revenue: subtotal === undefined ? undefined : round2(subtotal + (tax || 0) + (shipping || 0)),
+      ec_st: subtotal,
       ec_tx: tax,
       ec_sh: shipping,
       ec_dt: sumDiscount(ev.items),
@@ -929,13 +928,25 @@ scenarios:
     const o = r[1].params;
     assertThat(o.idgoal).isEqualTo('0');
     assertThat(o.ec_id).isEqualTo('T1');
-    assertThat(o.revenue).isEqualTo('129.9');
-    assertThat(o.ec_st).isEqualTo('99.9');
+    assertThat(o.revenue).isEqualTo('159.9');
+    assertThat(o.ec_st).isEqualTo('129.9');
     assertThat(o.ec_tx).isEqualTo('20');
     assertThat(o.ec_sh).isEqualTo('10');
     assertThat(o.ec_dt).isEqualTo('10');
     assertThat(o.ec_items).isEqualTo('[["SKU1","Shoe",["Shoes","Men"],59.95,2]]');
     assertThat(o.e_c).isUndefined();
+- name: hits of one event are sent one after another
+  code: |-
+    const callbacks = [];
+    mock('getAllEventData', ga4Event({ event_name: 'purchase', transaction_id: 'T1', value: 10 }));
+    mock('sendHttpRequest', function (url, cb) { callbacks.push(cb); });
+    runCode(withData({ idSite: '1' }));
+    assertThat(callbacks.length).isEqualTo(1);
+    callbacks[0](204, {}, '');
+    assertThat(callbacks.length).isEqualTo(2);
+    assertApi('gtmOnSuccess').wasNotCalled();
+    callbacks[1](204, {}, '');
+    assertApi('gtmOnSuccess').wasCalled();
 - name: purchase without items sends an empty item list
   code: |-
     const r = run(ga4Event({ event_name: 'purchase', transaction_id: 'T2', value: 10 }), { idSite: '1' });
