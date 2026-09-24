@@ -207,13 +207,15 @@ ___TEMPLATE_PARAMETERS___
         "type": "TEXT",
         "name": "searchCategoryKey",
         "displayName": "Event data key of the search category",
-        "simpleValueType": true
+        "simpleValueType": true,
+        "help": "Default: search_category"
       },
       {
         "type": "TEXT",
         "name": "searchCountKey",
         "displayName": "Event data key of the search results count",
-        "simpleValueType": true
+        "simpleValueType": true,
+        "help": "Default: search_total"
       },
       {
         "type": "SIMPLE_TABLE",
@@ -673,8 +675,8 @@ function buildGa4Hits(ev) {
   } else if (name === 'search' || name === 'view_search_results') {
     hits.push(extend(base, {
       search: ev.search_term,
-      search_cat: data.searchCategoryKey ? ev[data.searchCategoryKey] : undefined,
-      search_count: data.searchCountKey ? ev[data.searchCountKey] : undefined
+      search_cat: ev[data.searchCategoryKey || 'search_category'],
+      search_count: ev[data.searchCountKey || 'search_total']
     }));
   } else if (name === 'file_download') {
     hits.push(extend(base, { download: ev.link_url }));
@@ -926,6 +928,12 @@ scenarios:
     assertThat(r[0].params.search_cat).isEqualTo('products');
     assertThat(r[0].params.search_count).isEqualTo('12');
     assertThat(r[0].params.action_name).isUndefined();
+- name: GA4 site search reads search category and search total by default
+  code: |-
+    const r = run(ga4Event({ event_name: 'view_search_results', search_term: 'shoes', search_category: 'products', search_total: 12 }), { idSite: '1' });
+    assertThat(r[0].params.search).isEqualTo('shoes');
+    assertThat(r[0].params.search_cat).isEqualTo('products');
+    assertThat(r[0].params.search_count).isEqualTo('12');
 - name: GA4 file download and outbound click map to download and outlink
   code: |-
     const d = run(ga4Event({ event_name: 'file_download', link_url: 'https://www.example.com/f.pdf' }), { idSite: '1' });
