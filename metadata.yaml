@@ -15,5 +15,5 @@
 homepage: "https://openmost.com"
 documentation: "https://github.com/openmost/gtm-tag-template-matomo-server"
 versions:
-  - sha: 312e7113d056580b1bac8d37fb2b97c15f9ba844
+  - sha: 2e707b4c05fb922616f05a88d919e4b85440acc6
     changeNotes: Initial Version
